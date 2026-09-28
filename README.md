@@ -1,4 +1,5 @@
 # linux-server-lifecycle
+
 Lab-Projekt: Ubuntu-Server mit Ansible bereitstellen, härten, prüfen, sichern und wiederherstellen.
 
 ### Phase 0.1 — Projektplanung und Abgrenzung
@@ -89,3 +90,20 @@ Get-NetIPAddress -InterfaceAlias "vEthernet (LabSwitch-Internal)" -AddressFamily
 - Fehler bei Hyper-V-Befehlen kommen oft von fehlenden Administrator-Rechten.
 - Bytes in GB umrechnen: ÷ 1024³.
 - Eine Basis-VM wird nicht direkt benutzt, sondern geklont. Beim Klonen von Linux-VMs müssen `machine-id` und SSH-Host-Keys neu erzeugt werden.
+
+### Phase 0.3 — VM erstellen und Ubuntu Server installieren
+
+**Durchgeführte Schritte:**
+- Neue VM für dieses Projekt erstellt (Generation 2, 2 GB RAM, 2 vCPU, 25 GB dynamische Festplatte).
+- Secure Boot bleibt an, mit der Vorlage für Linux (sonst startet Ubuntu nicht).
+- Die ISO-Datei (Ubuntu Server 24.04.4) hatte ich schon früher geprüft.
+
+```powershell
+$vmName = "lab-ubuntu2404-base"
+$vmPath = "C:\HyperV-Labs\Lifecycle"
+New-Item -ItemType Directory -Path "$vmPath\$vmName" -Force
+
+New-VM -Name $vmName -Generation 2 -MemoryStartupBytes 2GB -Path $vmPath `
+  -NewVHDPath "$vmPath\$vmName\$vmName.vhdx" -NewVHDSizeBytes 25GB `
+  -SwitchName "LabSwitch-Internal"
+Set-VMProcessor
