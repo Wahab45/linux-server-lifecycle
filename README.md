@@ -106,4 +106,141 @@ New-Item -ItemType Directory -Path "$vmPath\$vmName" -Force
 New-VM -Name $vmName -Generation 2 -MemoryStartupBytes 2GB -Path $vmPath `
   -NewVHDPath "$vmPath\$vmName\$vmName.vhdx" -NewVHDSizeBytes 25GB `
   -SwitchName "LabSwitch-Internal"
-Set-VMProcessor
+Set-VMProcessor -VMName $vmName -Count 2
+Set-VMMemory -VMName $vmName -DynamicMemoryEnabled $false
+Add-VMNetworkAdapter -VMName $vmName -SwitchName "Default Switch"
+
+Add-VMDvdDrive -VMName $vmName -Path "C:\HyperV-Labs\ISOs\ubuntu-24.04.4-live-server-amd64.iso"
+Set-VMFirmware -VMName $vmName -SecureBootTemplate "MicrosoftUEFICertificateAuthority"
+Set-VMFirmware -VMName $vmName -FirstBootDevice (Get-VMDvdDrive -VMName $vmName)
+```
+
+![VM-Einstellungen nach dem Erstellen](Screenshots/06-vm-erstellt.png)
+
+- Installer-Auswahl: Sprache English, Ubuntu Server (nicht minimized), ganze Festplatte mit LVM (ohne Verschlüsselung), OpenSSH-Server installiert, keine Snaps.
+
+![Installer: SSH-Konfiguration](Screenshots/07-installer-ssh.png)
+
+- Nach der Installation die ISO getrennt:
+
+```powershell
+Set-VMDvdDrive -VMName $vmName -Path $null
+```
+
+![Erster Login](Screenshots/08-erster-login.png)
+
+- Erste Prüfung: Ubuntu 24.04.4 LTS, Kernel 6.8.0-142-generic, Python 3.12.3. Die Festplatte hat 25 GB (LVM-Gruppe 21,95 GB, davon ca. 11 GB dem Root-Dateisystem zugeteilt und ca. 11 GB frei). 54 Updates sind verfügbar.
+
+```bash
+uname -r
+lsblk
+df -h /
+sudo vgs
+sudo lvs
+ip -br a
+ip -br link
+systemctl is-active ssh
+python3 --version
+hostnamectl
+```
+
+![Erste Prüfung: Kernel, Festplatte, LVM, Netzwerk](Screenshots/09-erste-pruefung.png)
+
+```bash
+cat /etc/os-release
+```
+
+![Betriebssystem-Version](Screenshots/10-os-release.png)
+
+**Probleme und Lösungen:**
+- Problem: Am Ende der Installation kam „Failed unmounting cdrom.mount“.
+  Lösung: ISO in Windows trennen (`Set-VMDvdDrive -VMName $vmName -Path $null`), danach in der VM Enter drücken.
+- Problem: `systemctl is-active ssh` zeigte „inactive“.
+  Lösung: Ubuntu 24.04 startet SSH per Socket Activation. Ich habe `systemctl is-active ssh.socket` (active) und `sudo ss -tlnp | grep ':22'` geprüft. Nach der ersten Verbindung war `ssh` active.
+
+```bash
+systemctl is-active ssh.socket
+sudo ss -tlnp | grep ':22'
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+systemctl is-active ssh
+```
+
+![SSH-Socket, Port 22 und Fingerabdruck](Screenshots/11-ssh-socket.png)
+
+- Problem: „Host key verification failed“ beim ersten `ssh`.
+  Lösung: Ich hatte `y` und `n` getippt. Die Frage nach dem Fingerabdruck muss mit dem ganzen Wort `yes` beantwortet werden.
+
+![Fehler beim Fingerabdruck](Screenshots/12-ssh-fingerprint-fehler.png)
+
+- Problem: `Get-VMNetworkAdapter` zeigte „command not found“.
+  Lösung: Ich war noch in der SSH-Sitzung (Linux). Mit `exit` beenden und den Befehl in Windows-PowerShell ausführen.
+
+**Was ich gelernt habe:**
+- Eine VM mit PowerShell zu erstellen ist wiederholbar und dokumentiert jede Einstellung.
+- Generation-2-VMs brauchen für Linux die Secure-Boot-Vorlage „MicrosoftUEFICertificateAuthority“.
+- Der Installer lässt bei LVM absichtlich Platz frei. Diesen Platz kann ich später für getrennte Partitionen und Snapshots nutzen.
+- Ein SSH-Dienst kann „inactive“ sein und trotzdem funktionieren (Socket Activation).
+- Den Fingerabdruck des Servers kann man mit `ssh-keygen -lf` prüfen, bevor man `yes` antwortet.
+- Ich muss immer wissen, in welcher Shell ich bin: `PS C:\...>` ist Windows, `wahab@wahab:~$` ist Linux.
+
+### Phase 0.4 — Lab-Netzwerk mit fester Adresse
+
+**Durchgeführte Schritte:**
+- Ausgangslage: `eth0` (Lab-Netz) war DOWN ohne Adresse. `eth1` (Default Switch) hatte eine Adresse per DHCP. In `/etc/netplan` stand nur `50-cloud-init.yaml` mit `eth1` und `dhcp4: true`.
+- Zuordnung der Adapter über die MAC-Adressen geprüft (`00155D016F03` = eth0, `00155D016F04` = eth1).
+- Die DHCP-Adresse von `eth1` hat sich mehrmals geändert (`172.19.119.199`, `172.19.123.205`, `172.19.116.21`). Sie ist für die Verwaltung nicht geeignet.
+- Für dieses Projekt einen eigenen Internal-Switch angelegt, damit es keine Adresskonflikte mit anderen Lab-Netzen gibt:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress, PrefixLength
+New-VMSwitch -Name "Lifecycle-Internal" -SwitchType Internal
+New-NetIPAddress -InterfaceAlias "vEthernet (Lifecycle-Internal)" -IPAddress 10.99.0.1 -PrefixLength 24
+
+Get-VMNetworkAdapter -VMName lab-ubuntu2404-base |
+  Where-Object MacAddress -eq '00155D016F03' |
+  Connect-VMNetworkAdapter -SwitchName "Lifecycle-Internal"
+```
+
+- In der VM eine eigene netplan-Datei für `eth0` erstellt:
+
+```bash
+sudo tee /etc/netplan/60-lab-netz.yaml > /dev/null <<'EOF'
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 10.99.0.10/24
+EOF
+sudo chmod 600 /etc/netplan/60-lab-netz.yaml
+sudo netplan generate
+sudo netplan try
+```
+
+- Ergebnis: Ping von Windows (4 von 4 Antworten, 0 % Verlust) und SSH-Login über `10.99.0.10` funktionieren. Die Adapter der VM hängen an `Lifecycle-Internal` (eth0) und `Default Switch` (eth1).
+
+![Adapter am neuen Switch, Ping und SSH-Login](Screenshots/14-ping-und-ssh.png)
+
+- In der VM hat `eth0` jetzt `10.99.0.10/24`. Die Standardroute läuft nur über `eth1`.
+
+```bash
+ip -br a
+ip route
+```
+
+![Adressen und Routen in der VM](Screenshots/15-netzwerk-nachher.png)
+
+**Probleme und Lösungen:**
+- Problem: `eth0` blieb nach `netplan generate` DOWN.
+  Lösung: `netplan generate` prüft nur die Syntax. Erst `netplan try` (mit Enter) wendet die Konfiguration an.
+- Problem: Ich habe beide Adapter mit dem Namen „Netzwerkkarte“.
+  Lösung: Den Adapter über die MAC-Adresse auswählen (`Where-Object MacAddress -eq ...`).
+- Hinweis: Ein Ping von der VM zum Windows-Host kann an der Windows-Firewall scheitern. Deshalb teste ich von Windows zur VM.
+
+**Was ich gelernt habe:**
+- Ein Internal-Switch verbindet nur Host und VMs, nicht das Firmennetz.
+- Bei zwei Netzwerkkarten bekommt nur eine ein Standard-Gateway (hier `eth1` für das Internet). Deshalb steht in der netplan-Datei kein `gateway`.
+- `netplan try` ist sicherer als `netplan apply`, weil es nach 120 Sekunden automatisch zurückrollt.
+- `50-cloud-init.yaml` gehört cloud-init. Eigene Einstellungen kommen in eine eigene Datei.
+- Adapter identifiziert man am besten über die MAC-Adresse.
