@@ -1,5 +1,6 @@
 # linux-server-lifecycle
 Lab-Projekt: Ubuntu-Server mit Ansible bereitstellen, härten, prüfen, sichern und wiederherstellen.
+
 ### Phase 0.1 — Projektplanung und Abgrenzung
 
 **Durchgeführte Schritte:**
@@ -40,7 +41,7 @@ Get-PSDrive -PSProvider FileSystem
 
 - Ergebnis: Windows 10 Pro, ca. 13,9 GB RAM (14.528.572 KB ÷ 1024 ÷ 1024), Ryzen 7 mit 8 Kernen / 16 Threads, ca. 330 GB freier Speicher. Das reicht für drei kleine VMs.
 
-![Systeminfo: Windows, RAM, CPU und freier Speicher](screenshots/01-systeminfo.png)
+![Systeminfo: Windows, RAM, CPU und freier Speicher](Screenshots/01-systeminfo.png)
 
 - Hyper-V geprüft (als Administrator):
 
@@ -50,7 +51,7 @@ Get-VMSwitch
 Get-VMHost | Select-Object VirtualMachinePath, VirtualHardDiskPath
 ```
 
-![Get-VM und Get-VMSwitch als Administrator](screenshots/03-get-vm-get-vmswitch-admin.png)
+![Get-VM und Get-VMSwitch als Administrator](Screenshots/03-get-vm-get-vmswitch-admin.png)
 
 - Vorhandene VM `Ubuntu-Server-Base` genauer angeschaut:
 
@@ -61,7 +62,7 @@ Get-VMNetworkAdapter -VMName Ubuntu-Server-Base | Select-Object Name, SwitchName
 Get-VMSnapshot -VMName Ubuntu-Server-Base
 ```
 
-![Details der Basis-VM und ihres virtuellen Datenträgers](screenshots/04-vm-details.png)
+![Details der Basis-VM und ihres virtuellen Datenträgers](Screenshots/04-vm-details.png)
 
 - Netzwerk geprüft:
 
@@ -70,14 +71,14 @@ Get-NetNat
 Get-NetIPAddress -InterfaceAlias "vEthernet (LabSwitch-Internal)" -AddressFamily IPv4 | Select-Object IPAddress, PrefixLength
 ```
 
-![Netzwerk: Adapter der VM, NAT und Host-Adresse](screenshots/05-netzwerk.png)
+![Netzwerk: Adapter der VM, NAT und Host-Adresse](Screenshots/05-netzwerk.png)
 
 - Ergebnis: Generation-2-VM mit 3 GB Startspeicher (dynamisch). Die Festplatte ist dynamisch mit maximal 40 GB (ca. 13,8 GB belegt). Es gibt keine Checkpoints. Die VM hat zwei Netzwerkkarten: `LabSwitch-Internal` (Lab-Netz, Host-Adresse 192.168.100.1/24) und `Default Switch` (Internet). Ein NAT ist nicht eingerichtet.
 
 **Probleme und Lösungen:**
 - Problem: `Get-VM` und `Get-VMSwitch` zeigten den Fehler „Sie besitzen nicht die erforderliche Berechtigung für diese Aufgabe“.
 
-![Fehlermeldung bei fehlenden Administrator-Rechten](screenshots/02-fehler-berechtigung.png)
+![Fehlermeldung bei fehlenden Administrator-Rechten](Screenshots/02-fehler-berechtigung.png)
 
   Lösung: PowerShell war nicht als Administrator gestartet. Mit Rechtsklick → „Als Administrator ausführen“ funktionierten beide Befehle.
 - Annahme: Ich dachte zuerst, für Internet im Lab-Netz sei ein NAT nötig (`Get-NetNat` war leer).
