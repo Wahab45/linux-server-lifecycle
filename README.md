@@ -244,3 +244,179 @@ ip route
 - `netplan try` ist sicherer als `netplan apply`, weil es nach 120 Sekunden automatisch zurückrollt.
 - `50-cloud-init.yaml` gehört cloud-init. Eigene Einstellungen kommen in eine eigene Datei.
 - Adapter identifiziert man am besten über die MAC-Adresse.
+### Phase 0.5 — Control Node erstellen
+
+**Durchgeführte Schritte:**
+- Zweite VM `lab-control` erstellt: Generation 2, 2 GB RAM, 2 vCPU, 20 GB Festplatte. `eth0` direkt an `Lifecycle-Internal`, `eth1` an `Default Switch`.
+
+```powershell
+$vmName = "lab-control"
+$vmPath = "C:\HyperV-Labs\Lifecycle"
+New-Item -ItemType Directory -Path "$vmPath\$vmName" -Force
+
+New-VM -Name $vmName -Generation 2 -MemoryStartupBytes 2GB -Path $vmPath `
+  -NewVHDPath "$vmPath\$vmName\$vmName.vhdx" -NewVHDSizeBytes 20GB `
+  -SwitchName "Lifecycle-Internal"
+Set-VMProcessor -VMName $vmName -Count 2
+Set-VMMemory -VMName $vmName -DynamicMemoryEnabled $false
+Add-VMNetworkAdapter -VMName $vmName -SwitchName "Default Switch"
+
+Add-VMDvdDrive -VMName $vmName -Path "C:\HyperV-Labs\ISOs\ubuntu-24.04.4-live-server-amd64.iso"
+Set-VMFirmware -VMName $vmName -SecureBootTemplate "MicrosoftUEFICertificateAuthority"
+Set-VMFirmware -VMName $vmName -FirstBootDevice (Get-VMDvdDrive -VMName $vmName)
+```
+
+- Statische Adresse `10.99.0.20/24` über netplan gesetzt:
+
+```bash
+sudo tee /etc/netplan/60-lab-netz.yaml > /dev/null <<'EOF'
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 10.99.0.20/24
+EOF
+sudo chmod 600 /etc/netplan/60-lab-netz.yaml
+sudo netplan generate
+sudo netplan apply
+```
+
+- Ergebnis: Ping und SSH über `10.99.0.20` funktionieren, `ip route` zeigt nur eine Standardroute (über `eth1`).
+
+**Probleme und Lösungen:**
+- Problem: Zweimal versehentlich „Ubuntu Server (minimized)“ statt der Standardvariante installiert.
+  Lösung: Geprüft, ob Python, SSH und apt trotzdem funktionieren (ja) — bewusst dabei geblieben, statt ein drittes Mal neu zu installieren.
+- Problem: `Set-VMDvdDrive` schlug fehl („keine Berechtigung“).
+  Lösung: PowerShell nicht als Administrator offen gehabt — neu geöffnet.
+- Problem: VM-Start schlug fehl („Es kann kein RAM von 2048 MB reserviert werden“).
+  Lösung: Mit `Get-VM` laufende VMs geprüft, Speicher freigegeben.
+- Problem: Tastatureingaben kamen in der Hyper-V-Konsole nicht an, obwohl die VM lief.
+  Lösung: `Restart-VM -Force`, danach neues `vmconnect`-Fenster.
+- Problem: Kopieren/Einfügen in der Hyper-V-Konsole hat eine Datei verfälscht (`n/network:` statt `network:`).
+  Lösung: Datei gelöscht und per SSH (nicht in der Konsole) neu geschrieben; mit `cat` kontrolliert.
+- Problem: `netplan try` hat die SSH-Verbindung getrennt und alles automatisch zurückgerollt.
+  Lösung: Über die lokale Hyper-V-Konsole angemeldet und `netplan apply` verwendet statt `try`.
+
+**Was ich gelernt habe:**
+- `netplan try` ist sicher, solange die eigene Verbindung nicht über die Adresse läuft, die sich gerade ändert.
+- Nach jedem mehrzeiligen Einfügen die Datei mit `cat` prüfen, bevor man weitermacht.
+- Eine minimierte Ubuntu-Installation reicht für einen reinen Steuerrechner.
+- Ein VM-Fenster kann hängen, obwohl die VM selbst läuft — Neustart des Fensters oder `Restart-VM` hilft.
+
+### Phase 0.6 — Ansible installieren und erste Verbindung
+
+**Durchgeführte Schritte:**
+- Ansible auf `lab-control` installiert:
+
+```bash
+sudo apt update
+sudo apt install ansible -y
+ansible --version
+```
+
+- Ergebnis: `ansible [core 2.16.3]`, Python 3.12.3.
+- Inventory angelegt (`~/ansible-lab/inventory.ini`):
+
+```ini
+[ziel]
+lab-ziel ansible_host=10.99.0.10 ansible_user=wahab
+```
+
+- SSH-Schlüssel erzeugt und auf den Ziel-Server übertragen:
+
+```bash
+ssh-keygen -t ed25519 -C "ansible-lab-control" -f ~/.ssh/id_ed25519 -N ""
+ssh-copy-id wahab@10.99.0.10
+```
+
+- Erste Ansible-Verbindung erfolgreich getestet:
+
+```bash
+ansible ziel -i ~/ansible-lab/inventory.ini -m ping
+```
+
+Ergebnis: `lab-ziel | SUCCESS => {"ping": "pong"}`
+
+**Probleme und Lösungen:**
+- Problem: „No route to host“ beim ersten Verbindungsversuch.
+  Lösung: Der Ziel-Server war ausgeschaltet — in Hyper-V gestartet.
+- Problem: „Permission denied (publickey,password)“.
+  Lösung: Noch kein SSH-Schlüssel eingerichtet — mit `ssh-keygen` und `ssh-copy-id` nachgeholt.
+- Problem: `--ask-pass` schlug fehl („sshpass“ fehlt).
+  Lösung: Nicht sshpass installiert, sondern gleich den sichereren Weg über SSH-Keys gewählt.
+
+**Was ich gelernt habe:**
+- Das Ansible-Modul „ping“ ist ein Verbindungstest (SSH + Python erreichbar), kein Netzwerk-Ping.
+- Ansible fragt standardmäßig nicht nach einem Passwort — für Automatisierung braucht es einen SSH-Schlüssel.
+- Der private Schlüssel bleibt nur auf dem Control Node; nur der öffentliche Schlüssel geht zum Ziel-Server.
+
+### Teil 1 — Provisioning: Erstes Playbook
+
+**Durchgeführte Schritte:**
+- Playbook `~/ansible-lab/provision.yml` geschrieben, in mehreren Schritten gewachsen:
+
+```yaml
+---
+- name: Erste einfache Provisioning-Schritte
+  hosts: ziel
+  become: true
+  tasks:
+    - name: Paketliste aktualisieren
+      apt:
+        update_cache: true
+
+    - name: htop installieren
+      apt:
+        name: htop
+        state: present
+
+    - name: SSH-Dienst pruefen
+      service:
+        name: ssh
+        state: started
+
+    - name: SSH in der Firewall erlauben
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Firewall aktivieren
+      community.general.ufw:
+        state: enabled
+
+    - name: Benutzer demo anlegen
+      user:
+        name: demo
+        state: present
+        shell: /bin/bash
+```
+
+- Erst als Trockenlauf getestet, dann wirklich ausgeführt:
+
+```bash
+ansible-playbook -i ~/ansible-lab/inventory.ini ~/ansible-lab/provision.yml --check --ask-become-pass
+ansible-playbook -i ~/ansible-lab/inventory.ini ~/ansible-lab/provision.yml --ask-become-pass
+```
+
+- Ergebnis des echten Laufs: `ok=7 changed=2` — nur „Paketliste aktualisieren“ und „Benutzer demo anlegen“ waren changed; die Firewall-Tasks zeigten `ok`, weil sie durch einen vorherigen Lauf bereits umgesetzt waren (Idempotenz).
+- Direkt auf dem Ziel-Server geprüft:
+
+```bash
+sudo ufw status
+id demo
+```
+
+Ergebnis: `Status: active`, OpenSSH erlaubt (IPv4 + IPv6); `id demo` zeigt `uid=1001(demo) gid=1001(demo) groups=1001(demo)`.
+
+**Probleme und Lösungen:**
+- Problem: „Missing sudo password“ beim ersten `--check`-Lauf.
+  Lösung: Flag `--ask-become-pass` ergänzt — fragt vor der Ausführung nach dem sudo-Passwort (getrennt vom SSH-Login-Passwort).
+
+**Was ich gelernt habe:**
+- Jede Ansible-Task entspricht einem normalen Linux-Befehl, nur strukturiert geschrieben statt als freier Text.
+- `become: true` ersetzt `sudo`; das Passwort dafür ist getrennt vom SSH-Login und muss extra übergeben werden.
+- Idempotenz live gesehen: Beim zweiten Lauf zeigten die Firewall-Tasks „ok“ statt „changed“, weil der erste Lauf sie bereits umgesetzt hatte.
+- Reihenfolge ist bei sicherheitsrelevanten Tasks entscheidend: SSH-Regel immer vor dem Aktivieren der Firewall setzen, sonst Gefahr des Selbst-Aussperrens.
+- `--check` zeigt vorab, was passieren würde, ohne etwas zu verändern.
