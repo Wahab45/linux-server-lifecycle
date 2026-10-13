@@ -499,5 +499,96 @@ Ergebnis: Server zeigt `no`/`no`; Windows-Verbindung ohne Schlüssel wird sofort
 - Bei `sshd_config` gewinnt die erste gelesene Direktive, nicht die letzte — anders als bei den meisten Konfigurationsdateien.
 - Include-Dateien in `/etc/ssh/sshd_config.d/` können eigene Einstellungen in der Hauptdatei überschreiben (eigentlich: ihnen zuvorkommen) und müssen separat geprüft werden.
 - Vor sicherheitskritischen SSH-Änderungen immer eine bestehende Sitzung offen lassen und über einen separaten Kanal testen, bevor man sie schließt.
+
+### Teil 2 — Hardening: Benutzer, Dienste und Logging
+
+**Benutzerbereinigung:**
+- Aktive Logins geprüft (`/etc/passwd`): `root`, `wahab`, `demo`.
+- Testbenutzer `demo` entfernt (kein echter Nutzen mehr — Prinzip der minimalen Angriffsfläche).
+
+**Nicht benötigte Dienste:**
+- Ausgangslage (18 laufende Dienste) mit `systemctl list-units --type=service --state=running` geprüft.
+- Als VM ohne physische Hardware benötigt: `ModemManager`, `multipathd`, `upower`, `udisks2` nicht (kein Modem, keine Batterie, kein Multipath-Storage). Zusätzlich deaktiviert: `fwupd`, `packagekit` (Paketverwaltung läuft über apt/Ansible, kein interaktiver Firmware-Check nötig).
+- `polkit` bewusst **nicht** deaktiviert — zu wenig Sicherheit, dass nichts anderes davon abhängt (dokumentierte Ausnahme).
+- Ergebnis: von 18 auf 14 laufende Dienste reduziert.
+
+**Logging:**
+- `/var/log/auth.log` geprüft — protokolliert Logins und sudo-Befehle im Detail.
+- `/etc/logrotate.d/rsyslog` geprüft: `weekly`, `rotate 4` (~1 Monat Aufbewahrung).
+- Aufbewahrung auf `rotate 12` (~3 Monate) erhöht — bessere Nachvollziehbarkeit bei geringen Mehrkosten an Speicherplatz.
+
+**Vollständiges `harden.yml`:**
+
+```yaml
+---
+- name: SSH haerten
+  hosts: ziel
+  become: true
+  tasks:
+    - name: PermitRootLogin auf no setzen
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (Hauptdatei)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (cloud-init ueberschreibt sonst)
+      lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: Testbenutzer demo entfernen
+      user:
+        name: demo
+        state: absent
+        remove: true
+
+    - name: Nicht benoetigte Dienste stoppen und deaktivieren
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - ModemManager.service
+        - multipathd.service
+        - upower.service
+        - udisks2.service
+        - fwupd.service
+        - packagekit.service
+
+    - name: Logrotate-Aufbewahrung auf 12 Wochen erhoehen
+      lineinfile:
+        path: /etc/logrotate.d/rsyslog
+        regexp: '^(\s*)rotate \d+'
+        line: '\1rotate 12'
+        backrefs: true
+
+  handlers:
+    - name: sshd neu laden
+      service:
+        name: ssh
+        state: reloaded
+```
+
+**Probleme und Lösungen:**
+- Problem: `fwupd` und `packagekit` tauchten nach dem ersten Deaktivieren erneut als laufend auf.
+  Ursache: D-Bus-Activation — diese Dienste starten sich bei Bedarf selbst neu, ähnlich wie `ssh.socket`.
+  Lösung: Beide Dienste zusätzlich in die Deaktivierungs-Liste aufgenommen; nach dem zweiten Lauf blieben sie dauerhaft gestoppt.
+- Hinweis (bewusste Entscheidung, keine Lösung nötig): Kein Passphrase auf dem SSH-Schlüssel von `lab-control` gesetzt. Das Lab-Netz ist isoliert (Internal Switch), und ein Passphrase würde die Ansible-Automatisierung ohne zusätzlichen `ssh-agent` blockieren.
+
+**Was ich gelernt habe:**
+- `loop:` in Ansible wiederholt eine Task für jeden Listeneintrag, statt mehrere Tasks zu schreiben.
+- Manche Dienste starten sich selbst neu (D-Bus/Socket-Activation) — einmaliges Deaktivieren reicht nicht immer, eine zweite Prüfung lohnt sich.
+- `lineinfile` mit `backrefs: true` und einer Gruppe `(\s*)` im `regexp` erlaubt es, nur einen Teil einer Zeile zu ändern und den Rest (z. B. Einrückung) zu erhalten.
+- Nicht jede mögliche Härtungsmaßnahme muss umgesetzt werden — wichtig ist, bewusste Ausnahmen (hier: `polkit`, SSH-Port, kein Schlüssel-Passphrase) zu benennen und zu begründen, statt sie zu übersehen.
 - `user: state=absent, remove=true` entfernt Benutzer und Home-Verzeichnis gleichzeitig.
 - Nicht mehr benötigte Testkonten sollten entfernt werden, auch ohne gesetztes Passwort — Prinzip der minimalen Angriffsfläche.
