@@ -592,3 +592,29 @@ Ergebnis: Server zeigt `no`/`no`; Windows-Verbindung ohne Schlüssel wird sofort
 - Nicht jede mögliche Härtungsmaßnahme muss umgesetzt werden — wichtig ist, bewusste Ausnahmen (hier: `polkit`, SSH-Port, kein Schlüssel-Passphrase) zu benennen und zu begründen, statt sie zu übersehen.
 - `user: state=absent, remove=true` entfernt Benutzer und Home-Verzeichnis gleichzeitig.
 - Nicht mehr benötigte Testkonten sollten entfernt werden, auch ohne gesetztes Passwort — Prinzip der minimalen Angriffsfläche.
+### Compliance Audit — Zusammenfassung Ist/Soll
+
+**Methodik:** Vor jeder Härtungsmaßnahme wurde der Ist-Zustand geprüft (`sshd -T`, `systemctl list-units`, `cat /etc/logrotate.d/rsyslog`), danach der Soll-Zustand definiert und über `harden.yml` umgesetzt, anschließend erneut geprüft.
+
+| # | Punkt | Kategorie | Ist (vorher) | Soll (nachher) | Status |
+|---|---|---|---|---|---|
+| 1 | PermitRootLogin | SSH | without-password | no | ✅ erfüllt |
+| 2 | PasswordAuthentication | SSH | yes | no | ✅ erfüllt |
+| 3 | SSH-Port | SSH | 22 | 22 (unverändert) | ⚠️ bewusste Ausnahme |
+| 4 | Benutzer demo | Benutzer | vorhanden | entfernt | ✅ erfüllt |
+| 5 | ModemManager | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 6 | multipathd | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 7 | upower | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 8 | udisks2 | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 9 | fwupd | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 10 | packagekit | Dienste | laufend | gestoppt+deaktiviert | ✅ erfüllt |
+| 11 | polkit | Dienste | laufend | laufend (bewusst) | ⚠️ bewusste Ausnahme |
+| 12 | SSH-Key-Passphrase | Authentifizierung | keine | keine (Entscheidung) | ⚠️ bewusste Ausnahme |
+| 13 | Logrotate-Aufbewahrung | Logging | rotate 4 (~1 Monat) | rotate 12 (~3 Monate) | ✅ erfüllt |
+
+**Ergebnis:** 9 von 9 geplanten Härtungszielen umgesetzt; 3 dokumentierte, begründete Ausnahmen (keine Versäumnisse).
+
+**Begründung der Ausnahmen:**
+- **SSH-Port 22:** Portänderung ist „security through obscurity“, keine echte Sicherheitsmaßnahme; als optionale Zusatzübung zurückgestellt.
+- **polkit nicht deaktiviert:** Keine ausreichende Sicherheit, ob andere Systemkomponenten davon abhängen — Risiko eines Systemfehlers höher als der Sicherheitsgewinn.
+- **Kein SSH-Key-Passphrase:** Lab-Netz ist durch einen isolierten Hyper-V-Switch getrennt; ein Passphrase würde die Ansible-Automatisierung ohne zusätzlichen `ssh-agent` blockieren.
