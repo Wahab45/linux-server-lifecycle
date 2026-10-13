@@ -420,3 +420,84 @@ Ergebnis: `Status: active`, OpenSSH erlaubt (IPv4 + IPv6); `id demo` zeigt `uid=
 - Idempotenz live gesehen: Beim zweiten Lauf zeigten die Firewall-Tasks „ok“ statt „changed“, weil der erste Lauf sie bereits umgesetzt hatte.
 - Reihenfolge ist bei sicherheitsrelevanten Tasks entscheidend: SSH-Regel immer vor dem Aktivieren der Firewall setzen, sonst Gefahr des Selbst-Aussperrens.
 - `--check` zeigt vorab, was passieren würde, ohne etwas zu verändern.
+
+### Teil 2 — Hardening: SSH und Benutzerbereinigung
+
+**Ausgangslage (Ist-Zustand), geprüft mit `sudo sshd -T`:**
+
+```
+port 22
+permitrootlogin without-password
+passwordauthentication yes
+```
+
+**Ziel (Soll-Zustand):** `PermitRootLogin no`, `PasswordAuthentication no`. Port bleibt vorerst 22.
+
+**Durchgeführte Schritte:**
+- Playbook `~/ansible-lab/harden.yml` auf `lab-control` geschrieben:
+
+```yaml
+---
+- name: SSH haerten
+  hosts: ziel
+  become: true
+  tasks:
+    - name: PermitRootLogin auf no setzen
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (Hauptdatei)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (cloud-init ueberschreibt sonst)
+      lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: Testbenutzer demo entfernen
+      user:
+        name: demo
+        state: absent
+        remove: true
+
+  handlers:
+    - name: sshd neu laden
+      service:
+        name: ssh
+        state: reloaded
+```
+
+- Sicherheitsmaßnahme vor der Ausführung: eine bestehende SSH-Sitzung zum Ziel-Server bewusst offen gelassen, als Rückfalloption falls etwas schiefgeht.
+- Erst `--check`, dann echte Ausführung mit `--ask-become-pass`.
+- Nach der Ausführung dreifach geprüft:
+
+```bash
+sudo sshd -T | grep -E "permitrootlogin|passwordauthentication"   # auf dem Ziel-Server
+ssh wahab@10.99.0.10                                              # von Windows ohne Key
+ssh wahab@10.99.0.10                                              # von lab-control mit Key
+```
+
+Ergebnis: Server zeigt `no`/`no`; Windows-Verbindung ohne Schlüssel wird sofort mit „Permission denied (publickey)“ abgelehnt; `lab-control` meldet sich weiterhin ohne Passwort an.
+
+- Testbenutzer `demo` entfernt (kein echter Nutzen mehr, Prinzip der minimalen Angriffsfläche) und mit `id demo` bestätigt (`no such user`).
+
+**Probleme und Lösungen:**
+- Problem: `PasswordAuthentication` blieb nach der ersten Ausführung auf `yes`, obwohl Ansible „changed“ meldete.
+  Ursache: `/etc/ssh/sshd_config` enthält `Include /etc/ssh/sshd_config.d/*.conf` nahe am Anfang der Datei. Bei `sshd_config` gilt: **die erste gefundene Direktive gewinnt**, nicht die letzte. Die Datei `50-cloud-init.conf` wurde vor der eigenen Änderung gelesen und setzte dort weiterhin `yes`.
+  Lösung: Zusätzliche Task ergänzt, die `PasswordAuthentication` direkt in `/etc/ssh/sshd_config.d/50-cloud-init.conf` setzt.
+
+**Was ich gelernt habe:**
+- Bei `sshd_config` gewinnt die erste gelesene Direktive, nicht die letzte — anders als bei den meisten Konfigurationsdateien.
+- Include-Dateien in `/etc/ssh/sshd_config.d/` können eigene Einstellungen in der Hauptdatei überschreiben (eigentlich: ihnen zuvorkommen) und müssen separat geprüft werden.
+- Vor sicherheitskritischen SSH-Änderungen immer eine bestehende Sitzung offen lassen und über einen separaten Kanal testen, bevor man sie schließt.
+- `user: state=absent, remove=true` entfernt Benutzer und Home-Verzeichnis gleichzeitig.
+- Nicht mehr benötigte Testkonten sollten entfernt werden, auch ohne gesetztes Passwort — Prinzip der minimalen Angriffsfläche.
