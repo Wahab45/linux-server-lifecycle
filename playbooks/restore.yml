@@ -1,27 +1,52 @@
 ---
-- name: Restore der wichtigen Daten
+- name: Sicherer Restore-Test
   hosts: ziel
   become: true
+
+  vars:
+    backup_file: "{{ (lookup('fileglob', '/home/wahab/backups/backup-*.tar.gz', wantlist=True) | sort | last) }}"
+    restore_dir: /root/lifecycle-restore-test
+
   tasks:
-    - name: Alte Datei vor dem Restore explizit entfernen
-      file:
-        path: /home/wahab/wichtige-daten/kunden.txt
-        state: absent
+    - name: Restore-Verzeichnis erstellen
+      ansible.builtin.file:
+        path: "{{ restore_dir }}"
+        state: directory
+        mode: '0700'
 
-    - name: Backup-Archiv zum Ziel-Server kopieren
-      copy:
-        src: "/home/wahab/backups/backup-2026-10-15.tar.gz"
-        dest: "/tmp/restore.tar.gz"
+    - name: Backup zum Zielserver kopieren
+      ansible.builtin.copy:
+        src: "{{ backup_file }}"
+        dest: /root/lifecycle-restore.tar.gz
+        mode: '0600'
 
-    - name: Archiv entpacken
-      unarchive:
-        src: "/tmp/restore.tar.gz"
-        dest: /
+    - name: Backup isoliert wiederherstellen
+      ansible.builtin.unarchive:
+        src: /root/lifecycle-restore.tar.gz
+        dest: "{{ restore_dir }}"
         remote_src: true
-        extra_opts:
-          - "--overwrite"
 
-    - name: Temporäres Archiv loeschen
-      file:
-        path: "/tmp/restore.tar.gz"
+    - name: Originaldatei pruefen
+      ansible.builtin.stat:
+        path: /home/wahab/wichtige-daten/kunden.txt
+        checksum_algorithm: sha256
+      register: original
+
+    - name: Wiederhergestellte Datei pruefen
+      ansible.builtin.stat:
+        path: "{{ restore_dir }}/home/wahab/wichtige-daten/kunden.txt"
+        checksum_algorithm: sha256
+      register: restored
+
+    - name: Dateien vergleichen
+      ansible.builtin.assert:
+        that:
+          - original.stat.exists
+          - restored.stat.exists
+          - original.stat.checksum == restored.stat.checksum
+        success_msg: "RESTORE VERIFIED - SHA256 MATCH"
+
+    - name: Temporaeres Archiv entfernen
+      ansible.builtin.file:
+        path: /root/lifecycle-restore.tar.gz
         state: absent
