@@ -1,0 +1,57 @@
+---
+- name: SSH haerten
+  hosts: ziel
+  become: true
+  tasks:
+    - name: PermitRootLogin auf no setzen
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (Hauptdatei)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: PasswordAuthentication auf no setzen (cloud-init ueberschreibt sonst)
+      lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: sshd neu laden
+
+    - name: Testbenutzer demo entfernen
+      user:
+        name: demo
+        state: absent
+        remove: true
+
+    - name: Nicht benoetigte Dienste stoppen und deaktivieren
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - ModemManager.service
+        - multipathd.service
+        - upower.service
+        - udisks2.service
+        - fwupd.service
+        - packagekit.service
+
+    - name: Logrotate-Aufbewahrung auf 12 Wochen erhoehen
+      lineinfile:
+        path: /etc/logrotate.d/rsyslog
+        regexp: '^(\s*)rotate \d+'
+        line: '\1rotate 12'
+        backrefs: true
+
+  handlers:
+    - name: sshd neu laden
+      service:
+        name: ssh
+        state: reloaded
