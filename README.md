@@ -1,3 +1,22 @@
+# Linux Server Lifecycle — Ansible, Hardening & Disaster Recovery (Lab)
+
+**Portfolio overview:** A hands-on Ubuntu Server lab built with Hyper-V and Ansible. The workflow covers provisioning, SSH hardening, basic service and logging checks, timestamped backups, an isolated restore test, and SHA-256 verification.
+
+**Environment:** Windows Hyper-V · Ubuntu Server 24.04 · separate Ansible control node and target server · isolated lab networking.
+
+**Verified on 28 October 2026 (lab):**
+- Ansible hardening playbook completed without failures; SSH configuration check passed (`sshd -t`), and effective settings were `permitrootlogin no`, `passwordauthentication no`, `pubkeyauthentication yes`.
+- Backup playbook finished successfully, transferred the archive to the control node, and set its permissions to `0600`.
+- Restore playbook extracted to an isolated directory and reported **RESTORE VERIFIED - SHA256 MATCH** when comparing the restored test file with the current source file. This checks the tested file, **not** every entry in the archive, and is not a full disaster-recovery certification.
+
+**Code:** [Provisioning](playbooks/provision.yml) · [Hardening](playbooks/harden.yml) · [Backup](playbooks/backup.yml) · [Restore test](playbooks/restore.yml).
+
+**Security and scope notes:** These playbooks are designed for a controlled **learning lab**, not production deployment. The hardening playbook stops services selected for this lab; SSH changes should be tested for the target OS before use. Backup archives include files from `/etc` and may contain secrets: **never commit backup archives, real customer data, or private keys**. The restore test uses fixed lab paths and selects a timestamped archive; review the chosen archive before each use. The old manual restore experiment later in this document describes an observed troubleshooting step; the current `playbooks/restore.yml` performs a non-destructive isolated restore test instead.
+
+**Documentation:** The full chronological lab journal, including failures, reasoning, screenshots and fixes, follows below.
+
+---
+
 # linux-server-lifecycle
 
 **Lab-Projekt: Einen Ubuntu-Server mit Ansible bereitstellen, absichern, überprüfen, sichern und wiederherstellen**
