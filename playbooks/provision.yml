@@ -1,0 +1,33 @@
+---
+- name: Erste einfache Provisioning-Schritte
+  hosts: ziel
+  become: true
+  tasks:
+    - name: Paketliste aktualisieren
+      apt:
+        update_cache: true
+
+    - name: htop installieren
+      apt:
+        name: htop
+        state: present
+
+    - name: SSH-Dienst pruefen
+      service:
+        name: ssh
+        state: started
+
+    - name: SSH in der Firewall erlauben
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Firewall aktivieren
+      community.general.ufw:
+        state: enabled
+
+    - name: Benutzer demo anlegen
+      user:
+        name: demo
+        state: present
+        shell: /bin/bash
