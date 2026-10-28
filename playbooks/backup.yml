@@ -1,0 +1,23 @@
+---
+- name: Backup der wichtigen Daten
+  hosts: ziel
+  become: true
+  tasks:
+    - name: Archiv der wichtigen Daten erstellen
+      archive:
+        path:
+          - /etc
+          - /home/wahab/wichtige-daten
+        dest: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
+        format: gz
+
+    - name: Backup zum Control Node holen
+      fetch:
+        src: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
+        dest: /home/wahab/backups/
+        flat: true
+
+    - name: Temporäres Archiv auf dem Ziel-Server löschen
+      file:
+        path: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
+        state: absent
