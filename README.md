@@ -1,4 +1,4 @@
-# Linux Server Lifecycle — Ansible, Hardening & Disaster Recovery (Lab)
+# Linux Server Lifecycle — Ansible, SSH Hardening, Backup & Restore Verification (Lab)
 
 **Portfolio overview:** A hands-on Ubuntu Server lab built with Hyper-V and Ansible. The workflow covers provisioning, SSH hardening, basic service and logging checks, timestamped backups, an isolated restore test, and SHA-256 verification.
 
