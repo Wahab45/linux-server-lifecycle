@@ -1,0 +1,27 @@
+---
+- name: Restore der wichtigen Daten
+  hosts: ziel
+  become: true
+  tasks:
+    - name: Alte Datei vor dem Restore explizit entfernen
+      file:
+        path: /home/wahab/wichtige-daten/kunden.txt
+        state: absent
+
+    - name: Backup-Archiv zum Ziel-Server kopieren
+      copy:
+        src: "/home/wahab/backups/backup-2026-10-15.tar.gz"
+        dest: "/tmp/restore.tar.gz"
+
+    - name: Archiv entpacken
+      unarchive:
+        src: "/tmp/restore.tar.gz"
+        dest: /
+        remote_src: true
+        extra_opts:
+          - "--overwrite"
+
+    - name: Temporäres Archiv loeschen
+      file:
+        path: "/tmp/restore.tar.gz"
+        state: absent
