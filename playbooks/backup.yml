@@ -1,23 +1,51 @@
 ---
-- name: Backup der wichtigen Daten
+- name: Sicheres Lab-Backup
   hosts: ziel
   become: true
+
+  vars:
+    backup_name: "backup-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+    remote_dir: /root/lifecycle-backups
+    local_dir: /home/wahab/backups
+
   tasks:
-    - name: Archiv der wichtigen Daten erstellen
-      archive:
+    - name: Sicheres temporaeres Verzeichnis erstellen
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Backup-Verzeichnis auf Control Node erstellen
+      ansible.builtin.file:
+        path: "{{ local_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: false
+
+    - name: Backup erstellen
+      community.general.archive:
         path:
           - /etc
           - /home/wahab/wichtige-daten
-        dest: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
+        dest: "{{ remote_dir }}/{{ backup_name }}"
         format: gz
+        mode: '0600'
 
-    - name: Backup zum Control Node holen
-      fetch:
-        src: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
-        dest: /home/wahab/backups/
+    - name: Backup auf Control Node uebertragen
+      ansible.builtin.fetch:
+        src: "{{ remote_dir }}/{{ backup_name }}"
+        dest: "{{ local_dir }}/{{ backup_name }}"
         flat: true
 
-    - name: Temporäres Archiv auf dem Ziel-Server löschen
-      file:
-        path: "/tmp/backup-{{ ansible_date_time.date }}.tar.gz"
+    - name: Backup-Datei auf Control Node absichern
+      ansible.builtin.file:
+        path: "{{ local_dir }}/{{ backup_name }}"
+        mode: '0600'
+      delegate_to: localhost
+      become: false
+
+    - name: Temporaeres Backup entfernen
+      ansible.builtin.file:
+        path: "{{ remote_dir }}/{{ backup_name }}"
         state: absent
