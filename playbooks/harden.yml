@@ -8,21 +8,27 @@
         path: /etc/ssh/sshd_config
         regexp: '^#?PermitRootLogin'
         line: 'PermitRootLogin no'
-      notify: sshd neu laden
+      notify:
+        - SSH-Konfiguration pruefen
+        - sshd neu laden
 
     - name: PasswordAuthentication auf no setzen (Hauptdatei)
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PasswordAuthentication'
         line: 'PasswordAuthentication no'
-      notify: sshd neu laden
+      notify:
+        - SSH-Konfiguration pruefen
+        - sshd neu laden
 
     - name: PasswordAuthentication auf no setzen (cloud-init ueberschreibt sonst)
       lineinfile:
         path: /etc/ssh/sshd_config.d/50-cloud-init.conf
         regexp: '^#?PasswordAuthentication'
         line: 'PasswordAuthentication no'
-      notify: sshd neu laden
+      notify:
+        - SSH-Konfiguration pruefen
+        - sshd neu laden
 
     - name: Testbenutzer demo entfernen
       user:
@@ -51,6 +57,10 @@
         backrefs: true
 
   handlers:
+    - name: SSH-Konfiguration pruefen
+      command: /usr/sbin/sshd -t
+      changed_when: false
+
     - name: sshd neu laden
       service:
         name: ssh
